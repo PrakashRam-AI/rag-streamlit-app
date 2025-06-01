@@ -1,59 +1,70 @@
 import streamlit as st
-import openai
-import PyPDF2
 import pandas as pd
+import PyPDF2
+import openai
+import io
 
+# --- Page Config ---
 st.set_page_config(page_title="RAG App", layout="wide")
-st.title("📄🧠 Retrieval-Augmented Generation App")
+st.title("📄 Retrieval-Augmented Generation (RAG) App")
 
-# API key input
-api_key = st.text_input("🔑 Enter your OpenAI API key", type="password")
-if not api_key:
-    st.warning("Please enter your OpenAI API key to continue.")
-    st.stop()
-openai.api_key = api_key
+# --- User Inputs ---
+openai_api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
 
-# File uploader
-uploaded_files = st.file_uploader("📁 Upload PDF, TXT, or Excel files", type=["pdf", "txt", "xlsx"], accept_multiple_files=True)
+uploaded_file = st.file_uploader("📂 Upload a PDF, TXT, or Excel file", type=["pdf", "txt", "xlsx"])
 
-# Extract text from files
+query = st.text_area("❓ Ask a question about the file:", height=100)
+
+# --- Extract Text from Files ---
 def extract_text(file):
-    if file.type == "application/pdf":
+    if file.name.endswith(".pdf"):
         reader = PyPDF2.PdfReader(file)
-        return "\n".join(page.extract_text() for page in reader.pages if page.extract_text())
-    elif file.type == "text/plain":
-        return file.read().decode("utf-8")
-    elif file.type in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]:
+        text = "".join(page.extract_text() for page in reader.pages if page.extract_text())
+    elif file.name.endswith(".txt"):
+        text = file.read().decode("utf-8")
+    elif file.name.endswith(".xlsx"):
         df = pd.read_excel(file)
-        return df.to_string(index=False)
-    return ""
+        text = df.to_string(index=False)
+    else:
+        text = ""
+    return text
 
-corpus = ""
-if uploaded_files:
-    for file in uploaded_files:
-        file_text = extract_text(file)
-        if file_text:
-            corpus += file_text + "\n"
+# --- Generate Response using OpenAI 0.28 syntax ---
+def generate_response(text, query, api_key):
+    openai.api_key = api_key
 
-# User query
-query = st.text_area("💬 Ask a question based on the uploaded documents")
+    prompt = f"""You are a helpful assistant. Use the following document to answer the question.
 
-# Submit and generate response
-if st.button("🧠 Generate Response") and query:
-    with st.spinner("Generating answer..."):
-        prompt = f"""You are an assistant that answers questions based on the following document content:
+    Document:
+    {text[:4000]}
 
-{corpus}
+    Question:
+    {query}
+    """
 
-Question: {query}
-Answer:"""
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+    )
 
-        try:
-            response = openai.ChatCompletion.create(
-                model="gpt-4",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3
-            )
-            st.success(response.choices[0].message["content"].strip())
-        except Exception as e:
-            st.error(f"Error: {str(e)}")
+    return response.choices[0].message["content"].strip()
+
+# --- Run RAG Flow ---
+if st.button("🧠 Generate Response"):
+    if not openai_api_key:
+        st.error("Please enter your OpenAI API key.")
+    elif not uploaded_file:
+        st.error("Please upload a file.")
+    elif not query.strip():
+        st.error("Please enter a question.")
+    else:
+        with st.spinner("Reading and analyzing the file..."):
+            file_text = extract_text(uploaded_file)
+            if not file_text:
+                st.error("Failed to extract text from the uploaded file.")
+            else:
+                response = generate_response(file_text, query, openai_api_key)
+                st.success("✅ Response Generated")
+                st.markdown("### 📝 Answer:")
+                st.write(response)
